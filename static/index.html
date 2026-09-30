@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f6f3" />
+    <title>Northstar | Trading Research</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <aside class="rail">
+      <a class="brand" href="/" aria-label="Northstar home"><span class="brand-mark">N</span><span>NORTHSTAR</span></a>
+      <div class="rail-label">WORKSPACE</div>
+      <nav aria-label="Main navigation">
+        <a class="nav-item active" href="#overview"><span class="nav-glyph">◫</span>Overview</a>
+        <a class="nav-item" href="#research"><span class="nav-glyph">⌁</span>Research</a>
+        <a class="nav-item" href="#activity"><span class="nav-glyph">≋</span>Activity</a>
+      </nav>
+      <div class="rail-bottom">
+        <div class="rail-label">ENVIRONMENT</div>
+        <div class="env"><span class="pulse"></span><span>Local simulation</span></div>
+        <div class="user-chip"><span class="avatar">R</span><span><strong>Research desk</strong><small>Paper workspace</small></span><span class="more">···</span></div>
+      </div>
+    </aside>
+
+    <main class="main" id="overview">
+      <header class="topbar">
+        <div class="crumb">Trading systems <span>/</span> <strong>Overview</strong></div>
+        <div class="top-actions"><span class="market-clock"><span class="pulse" id="market-mode-dot"></span><span id="market-mode-label">DEMO DATA</span></span><button class="icon-button" id="refresh-button" title="Refresh data" aria-label="Refresh data">↻</button></div>
+      </header>
+
+      <section class="page-heading">
+        <div><div class="eyebrow">RESEARCH ENVIRONMENT <span class="tag">SAFE RESEARCH MVP</span></div><h1>Good morning, researcher.</h1><p>Explore live market data and paper research. Broker order execution remains disabled.</p></div>
+        <div class="heading-tools"><label for="instrument">Instrument</label><select id="instrument"><option value="DEMO">DEMO · synthetic</option></select><button class="button button-dark" id="backtest-button"><span>▶</span> Run backtest</button></div>
+      </section>
+
+      <div class="safety-banner"><span class="shield">◇</span><div><strong>Execution disabled</strong><span id="provider-summary">Synthetic sample data · broker orders disabled · LLM disabled</span></div><a href="#risk">Risk controls <span>↗</span></a></div>
+      <section class="provider-strip" aria-label="Provider status">
+        <div><span class="provider-dot" id="angelone-dot"></span><span><strong>ANGEL ONE SMARTAPI</strong><small id="angelone-provider-status">Disabled · local setup required</small></span></div>
+        <div class="provider-actions"><button class="small-action" id="angelone-login-open" type="button" disabled>Login</button><button class="small-action" id="angelone-feed-start" type="button" disabled>Start feed</button><button class="small-action quiet" id="angelone-logout" type="button" hidden>Logout</button></div>
+        <div><span class="provider-dot muted" id="llm-dot"></span><span><strong id="llm-provider-name">GITHUB COPILOT SDK</strong><small id="llm-provider-status">Disabled</small></span></div>
+        <span class="provider-scope">NIFTY + BANKNIFTY · NEAREST EXPIRY · ATM ±5 · FUTURES DEFERRED</span>
+      </section>
+
+      <dialog class="login-dialog" id="angelone-login-dialog" aria-labelledby="angelone-login-title">
+        <form id="angelone-login-form">
+          <div class="panel-heading"><div><div class="eyebrow">LOCAL SESSION</div><h2 id="angelone-login-title">Angel One login</h2></div><button class="icon-button" id="angelone-login-close" type="button" aria-label="Close login">×</button></div>
+          <p class="login-note">PIN and current TOTP are sent only to the local service for authentication. They are not saved. Session expires at midnight.</p>
+          <label class="login-field">Client code<input name="client_code" autocomplete="username" required maxlength="32" /></label>
+          <label class="login-field">PIN<input name="pin" type="password" autocomplete="current-password" required maxlength="32" /></label>
+          <label class="login-field">6-digit TOTP<input name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+          <div class="login-actions"><button class="button button-outline" id="angelone-login-cancel" type="button">Cancel</button><button class="button button-dark" id="angelone-login-submit" type="submit">Authenticate</button></div>
+        </form>
+      </dialog>
+
+      <section class="panel live-market-panel" aria-label="Live market watchlist">
+        <div class="panel-heading"><div><div class="eyebrow">MARKET FEED</div><h2>Live watchlist</h2></div><span class="status-pill" id="market-feed-pill">DISCONNECTED</span></div>
+        <p class="market-feed-note" id="market-feed-note">Synthetic research data is active. Authenticate and start the Angel One feed to receive live NSE/NFO ticks.</p>
+        <div class="table-scroll"><table class="live-market-table"><thead><tr><th>INSTRUMENT</th><th>SEGMENT</th><th>EXPIRY</th><th>STRIKE</th><th>LAST</th><th>OPEN INTEREST</th><th>BEST BID / ASK</th><th>MARKET TIME</th></tr></thead><tbody id="live-ticks"><tr><td colspan="8" class="empty-cell">No live ticks received.</td></tr></tbody></table></div>
+      </section>
+
+      <section class="metrics" aria-label="Backtest results">
+        <article class="metric"><div class="metric-label">ENDING EQUITY <span>ⓘ</span></div><div class="metric-value" id="ending-equity">—</div><div class="metric-foot" id="equity-subtitle">Run a replay to calculate</div></article>
+        <article class="metric"><div class="metric-label">TOTAL RETURN <span>ⓘ</span></div><div class="metric-value" id="return-value">—</div><div class="metric-foot">After modeled fees and slippage</div></article>
+        <article class="metric"><div class="metric-label">MAX DRAWDOWN <span>ⓘ</span></div><div class="metric-value" id="drawdown-value">—</div><div class="metric-foot">Peak-to-trough equity decline</div></article>
+        <article class="metric"><div class="metric-label">CLOSED TRADES <span>ⓘ</span></div><div class="metric-value" id="trades-value">—</div><div class="metric-foot" id="win-rate">Win rate —</div></article>
+      </section>
+
+      <section class="work-grid" id="research">
+        <article class="panel chart-panel">
+          <div class="panel-heading"><div><div class="eyebrow">PERFORMANCE</div><h2>Equity curve</h2></div><div class="chart-meta"><span class="legend-dot"></span><span id="chart-caption">Backtest · DEMO</span><span class="period">240 bars</span></div></div>
+          <div class="chart-wrap"><svg id="equity-chart" viewBox="0 0 900 250" role="img" aria-label="Simulation equity curve"><text x="50%" y="50%" text-anchor="middle" class="chart-placeholder">Run a backtest to view performance</text></svg></div>
+          <div class="chart-footer"><span id="chart-start">STARTING EQUITY <strong>—</strong></span><span id="chart-end">LATEST EQUITY <strong>—</strong></span><span class="data-note"><span class="pulse"></span> SAMPLE HISTORY</span></div>
+        </article>
+
+        <article class="panel controls-panel" id="risk">
+          <div class="panel-heading"><div><div class="eyebrow">CONTROL PLANE</div><h2>Risk &amp; replay</h2></div><span class="status-pill" id="risk-status">READY</span></div>
+          <div class="strategy-summary"><div class="strategy-icon">↗</div><div><strong>SMA crossover</strong><small>Deterministic · long-only</small></div><span class="version">v1</span></div>
+          <div class="quant-summary" aria-label="Quantitative market snapshot">
+            <div><span>RSI · 14</span><strong id="feature-rsi">—</strong></div>
+            <div><span>ATR · 14</span><strong id="feature-atr">—</strong></div>
+            <div><span>VOL Z · 20</span><strong id="feature-volume">—</strong></div>
+            <div><span>REGIME</span><strong id="feature-regime">—</strong></div>
+          </div>
+          <div class="hypothesis-card"><div class="hypothesis-heading"><span class="eyebrow">HYPOTHESIS REVIEW</span><span class="status-pill" id="hypothesis-status">LOADING</span><button class="llm-review-button" id="llm-review-button" type="button" disabled title="Enable a model provider and connect a fresh market-data feed">Ask Copilot ↗</button></div><strong id="hypothesis-thesis">Loading deterministic analysis…</strong><small id="hypothesis-evidence">Evidence will reference source event IDs.</small></div>
+          <div class="control-line"><span>Fast / slow window</span><strong>8 / 21 bars</strong></div>
+          <div class="control-line"><span>Max order value</span><strong>10% of equity</strong></div>
+          <div class="control-line"><span>Max gross exposure</span><strong>50% of equity</strong></div>
+          <div class="control-line"><span>Cost model</span><strong>10 bps fee · 5 bps slip</strong></div>
+          <div class="risk-divider"></div>
+          <label class="switch-row" for="kill-switch"><span><strong>Emergency kill switch</strong><small>Block new simulated entries</small></span><input id="kill-switch" type="checkbox" /><span class="switch"></span></label>
+          <button class="button button-outline" id="paper-button">Run paper replay <span>→</span></button>
+          <div class="risk-footnote">Paper replay uses the same strategy and fills as backtesting.</div>
+        </article>
+      </section>
+
+      <section class="bottom-grid" id="activity">
+        <article class="panel table-panel"><div class="panel-heading"><div><div class="eyebrow">EXECUTION LOG</div><h2>Closed trades</h2></div><span class="table-count" id="trade-count">0 records</span></div><div class="table-scroll"><table><thead><tr><th>INSTRUMENT</th><th>ENTRY</th><th>EXIT</th><th>QTY</th><th>NET P&amp;L · UNITS</th></tr></thead><tbody id="trades-table"><tr><td colspan="5" class="empty-cell">Run a simulation to populate the trade log.</td></tr></tbody></table></div></article>
+        <article class="panel events-panel"><div class="panel-heading"><div><div class="eyebrow">AUDIT TRAIL</div><h2>Recent events</h2></div><a class="text-link" href="#activity" id="events-refresh">Refresh ↻</a></div><div id="event-list" class="event-list"><div class="empty-cell">No simulation events recorded.</div></div></article>
+        <article class="panel news-panel"><div class="panel-heading"><div><div class="eyebrow">EXTERNAL CONTEXT</div><h2>News intelligence</h2></div><div class="news-actions"><span class="table-count" id="news-count">0 items</span><button class="small-action" id="news-add-open" type="button">Add article</button></div></div><div id="news-list" class="news-list"><div class="empty-cell">No news has been ingested.</div></div></article>
+      </section>
+      <dialog class="login-dialog news-dialog" id="news-dialog" aria-labelledby="news-dialog-title">
+        <form id="news-form">
+          <div class="panel-heading"><div><div class="eyebrow">MANUAL INGESTION</div><h2 id="news-dialog-title">Add research article</h2></div><button class="icon-button" id="news-dialog-close" type="button" aria-label="Close article form">×</button></div>
+          <p class="login-note">Enter content only from a source you are licensed to use. Publication time is kept separate from ingestion time.</p>
+          <label class="login-field">Source<input name="source" required maxlength="120" autocomplete="off" /></label>
+          <label class="login-field">Headline<input name="title" required maxlength="500" autocomplete="off" /></label>
+          <label class="login-field">Original article URL<input name="original_url" type="url" maxlength="2000" placeholder="https://…" autocomplete="url" /></label>
+          <label class="login-field">Published at<input name="published_at" type="datetime-local" required /></label>
+          <label class="login-field">Symbols, comma separated<input name="instruments" placeholder="NIFTY, RELIANCE" autocomplete="off" /></label>
+          <div class="news-meta-fields"><label class="login-field">Sector<input name="sector" maxlength="120" /></label><label class="login-field">Country<input name="country" value="IN" maxlength="80" /></label><label class="login-field">Source reliability<input name="source_reliability" type="number" min="0" max="1" step="0.05" value="0.75" /></label></div>
+          <label class="login-field">Content<textarea name="content" rows="5" required maxlength="20000"></textarea></label>
+          <div class="login-actions"><button class="button button-outline" id="news-cancel" type="button">Cancel</button><button class="button button-dark" id="news-submit" type="submit">Ingest article</button></div>
+        </form>
+      </dialog>
+      <footer><span>NORTHSTAR RESEARCH PLATFORM</span><span>Local prototype · No investment advice · No live execution</span></footer>
+    </main>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

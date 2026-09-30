@@ -1,0 +1,5 @@
+smartapi-python>=1.5.5
+pyotp>=2.9
+logzero>=1.7
+websocket-client>=1.8
+pycryptodome>=3.20
