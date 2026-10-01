@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from math import isfinite
 from typing import Callable, Iterable
 from uuid import uuid4
@@ -40,6 +41,22 @@ class OptionContract:
     expiry: date
     strike: float
     option_type: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.instrument_token, int)
+            or isinstance(self.instrument_token, bool)
+            or self.instrument_token < 1
+        ):
+            raise ValueError("Option instrument token must be a positive integer")
+        if not self.exchange or not self.trading_symbol or not self.underlying:
+            raise ValueError("Option exchange, symbol, and underlying are required")
+        if not isinstance(self.expiry, date) or isinstance(self.expiry, datetime):
+            raise ValueError("Option expiry must be a date")
+        if isinstance(self.strike, bool) or not isfinite(self.strike) or self.strike <= 0:
+            raise ValueError("Option strike must be finite and positive")
+        if self.option_type not in {"CE", "PE"}:
+            raise ValueError("Option type must be CE or PE")
 
 
 @dataclass(frozen=True)
@@ -111,9 +128,20 @@ def select_nearest_option_contracts(
         option_type = str(item.get("instrument_type", "")).upper()
         segment = str(item.get("segment", "")).upper()
         expiry = _as_date(item.get("expiry"))
+        raw_token = item.get("instrument_token")
         try:
             strike = float(item.get("strike", 0))
-        except (TypeError, ValueError):
+            if isinstance(raw_token, bool):
+                continue
+            token_value = Decimal(str(raw_token))
+            if (
+                not token_value.is_finite()
+                or token_value < 1
+                or token_value != token_value.to_integral_value()
+            ):
+                continue
+            instrument_token = int(token_value)
+        except (InvalidOperation, TypeError, ValueError, OverflowError):
             continue
         if (
             underlying in candidates
@@ -124,7 +152,12 @@ def select_nearest_option_contracts(
             and isfinite(strike)
             and strike > 0
         ):
-            candidates[underlying].append({**item, "_expiry": expiry, "_strike": strike})
+            candidates[underlying].append({
+                **item,
+                "_expiry": expiry,
+                "_strike": strike,
+                "_instrument_token": instrument_token,
+            })
 
     selected: list[OptionContract] = []
     for underlying in sorted(requested):
@@ -143,7 +176,7 @@ def select_nearest_option_contracts(
                 continue
             try:
                 selected.append(OptionContract(
-                    instrument_token=int(row["instrument_token"]),
+                    instrument_token=row["_instrument_token"],
                     exchange=str(row.get("exchange", "NFO")),
                     trading_symbol=str(row["tradingsymbol"]),
                     underlying=underlying,

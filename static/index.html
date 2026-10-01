@@ -8,16 +8,24 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=desk-phase7b-20261001" />
   </head>
   <body>
     <aside class="rail">
       <a class="brand" href="/" aria-label="Northstar home"><span class="brand-mark">N</span><span>NORTHSTAR</span></a>
       <div class="rail-label">WORKSPACE</div>
       <nav aria-label="Main navigation">
-        <a class="nav-item active" href="#overview"><span class="nav-glyph">◫</span>Overview</a>
-        <a class="nav-item" href="#research"><span class="nav-glyph">⌁</span>Research</a>
-        <a class="nav-item" href="#activity"><span class="nav-glyph">≋</span>Activity</a>
+        <a class="nav-item active" href="#overview"><span class="nav-glyph">⌂</span>Dashboard</a>
+        <a class="nav-item" href="#market-overview"><span class="nav-glyph">◫</span>Markets</a>
+        <a class="nav-item" href="#watchlist"><span class="nav-glyph">▤</span>Watchlist</a>
+        <a class="nav-item" href="#signals"><span class="nav-glyph">⌁</span>Signals</a>
+        <a class="nav-item" href="#signals"><span class="nav-glyph">✳</span>AI Research</a>
+        <a class="nav-item" href="#portfolio"><span class="nav-glyph">▣</span>Portfolio</a>
+        <a class="nav-item" href="#orders"><span class="nav-glyph">⇄</span>Orders</a>
+        <a class="nav-item" href="#risk"><span class="nav-glyph">◇</span>Risk</a>
+        <a class="nav-item" href="#strategy-performance"><span class="nav-glyph">⌁</span>Backtest</a>
+        <a class="nav-item" href="#news"><span class="nav-glyph">▧</span>News</a>
+        <a class="nav-item" href="#system-health"><span class="nav-glyph">◎</span>System Health</a>
       </nav>
       <div class="rail-bottom">
         <div class="rail-label">ENVIRONMENT</div>
@@ -25,16 +33,32 @@
         <div class="user-chip"><span class="avatar">R</span><span><strong>Research desk</strong><small>Paper workspace</small></span><span class="more">···</span></div>
       </div>
     </aside>
+    <button class="rail-backdrop" id="rail-backdrop" type="button" aria-label="Close navigation" hidden></button>
 
     <main class="main" id="overview">
       <header class="topbar">
-        <div class="crumb">Trading systems <span>/</span> <strong>Overview</strong></div>
-        <div class="top-actions"><span class="market-clock"><span class="pulse" id="market-mode-dot"></span><span id="market-mode-label">DEMO DATA</span></span><button class="icon-button" id="refresh-button" title="Refresh data" aria-label="Refresh data">↻</button></div>
+        <div class="topbar-start">
+          <button class="icon-button menu-toggle" id="sidebar-toggle" type="button" aria-label="Collapse navigation" aria-expanded="true" title="Collapse navigation">☰</button>
+          <div class="crumb">Trading systems <span>/</span> <strong>Dashboard</strong></div>
+          <div class="session-clock"><span>NSE SESSION</span><strong id="nse-session-status">CALENDAR UNCONFIGURED</strong><time id="ist-clock">--:--:-- IST</time></div>
+        </div>
+        <div class="top-actions">
+          <label class="global-search" for="global-search"><span aria-hidden="true">⌕</span><input id="global-search" type="search" list="instrument-suggestions" placeholder="Find an instrument" autocomplete="off" /><datalist id="instrument-suggestions"></datalist></label>
+          <div class="mode-indicator" aria-label="Current mode: analysis and paper simulation only; live orders disabled"><span>MODE</span><strong>ANALYSIS</strong><small>PAPER SIM · LIVE OFF</small></div>
+          <span class="market-clock" role="status"><span class="pulse" id="market-mode-dot"></span><span id="market-mode-label">DEMO / STORED DATA</span></span>
+          <button class="icon-button" id="refresh-button" title="Refresh data" aria-label="Refresh data">↻</button>
+        </div>
       </header>
 
+      <div class="market-data-strip offline" id="market-data-strip" role="status" aria-live="polite">
+        <span class="state-indicator" aria-hidden="true"></span>
+        <div><strong id="market-data-title">DATA DISCONNECTED</strong><span id="market-data-detail">Showing stored or synthetic data. Live market data is unavailable.</span></div>
+        <span class="stream-status" id="stream-status">TICK SOCKET CONNECTING</span>
+      </div>
+
       <section class="page-heading">
-        <div><div class="eyebrow">RESEARCH ENVIRONMENT <span class="tag">SAFE RESEARCH MVP</span></div><h1>Good morning, researcher.</h1><p>Explore live market data and paper research. Broker order execution remains disabled.</p></div>
-        <div class="heading-tools"><label for="instrument">Instrument</label><select id="instrument"><option value="DEMO">DEMO · synthetic</option></select><button class="button button-dark" id="backtest-button"><span>▶</span> Run backtest</button></div>
+        <div><div class="eyebrow">INDIA MARKETS <span class="tag">RESEARCH ONLY</span></div><h1>India market desk</h1><p>NSE and NFO context, deterministic signals, and paper research. Live order execution is disabled.</p></div>
+        <div class="heading-tools"><label for="instrument">Instrument</label><select id="instrument"><option value="DEMO">DEMO · synthetic</option></select></div>
       </section>
 
       <div class="safety-banner"><span class="shield">◇</span><div><strong>Execution disabled</strong><span id="provider-summary">Synthetic sample data · broker orders disabled · LLM disabled</span></div><a href="#risk">Risk controls <span>↗</span></a></div>
@@ -56,51 +80,109 @@
         </form>
       </dialog>
 
-      <section class="panel live-market-panel" aria-label="Live market watchlist">
-        <div class="panel-heading"><div><div class="eyebrow">MARKET FEED</div><h2>Live watchlist</h2></div><span class="status-pill" id="market-feed-pill">DISCONNECTED</span></div>
-        <p class="market-feed-note" id="market-feed-note">Synthetic research data is active. Authenticate and start the Angel One feed to receive live NSE/NFO ticks.</p>
-        <div class="table-scroll"><table class="live-market-table"><thead><tr><th>INSTRUMENT</th><th>SEGMENT</th><th>EXPIRY</th><th>STRIKE</th><th>LAST</th><th>OPEN INTEREST</th><th>BEST BID / ASK</th><th>MARKET TIME</th></tr></thead><tbody id="live-ticks"><tr><td colspan="8" class="empty-cell">No live ticks received.</td></tr></tbody></table></div>
+      <section class="dashboard-section" id="market-overview" aria-labelledby="market-title">
+        <div class="section-heading"><div><div class="eyebrow">INDIAN EQUITY &amp; DERIVATIVES</div><h2 id="market-title">Market Overview</h2></div><span id="market-asof" class="section-meta">Waiting for local data</span></div>
+        <div class="market-grid">
+          <article class="quote-panel"><span>NIFTY 50</span><strong id="nifty-value">—</strong><small id="nifty-change">Index history unavailable</small><time id="nifty-asof">No NSE history loaded</time></article>
+          <article class="quote-panel"><span>BANKNIFTY</span><strong id="banknifty-value">—</strong><small id="banknifty-change">Index history unavailable</small><time id="banknifty-asof">No NSE history loaded</time></article>
+          <article class="quote-panel"><span>SENSEX</span><strong id="sensex-value">—</strong><small id="sensex-change">Index history unavailable</small><time id="sensex-asof">No BSE history loaded</time></article>
+          <article class="quote-panel"><span>INDIA VIX</span><strong id="india-vix-value">—</strong><small id="india-vix-change">Volatility index unavailable</small><time id="india-vix-asof">No VIX history loaded</time></article>
+          <article class="quote-panel regime-panel"><span>MARKET REGIME</span><strong id="market-regime">INSUFFICIENT DATA</strong><small id="market-regime-posture">Risk posture unknown</small><time id="market-regime-reason">NIFTY and BANKNIFTY history required</time></article>
+        </div>
+        <div class="market-columns">
+          <article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">CROSS-SECTION</div><h3>Sector Overview</h3></div><span class="table-count" id="sector-count">No sector map</span></div><div id="sector-list" class="sector-list"><p class="empty-cell">Sector constituents and mappings are not configured.</p></div></article>
+          <article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">PARTICIPATION</div><h3>Market Breadth</h3></div><span class="table-count" id="breadth-asof">No aligned universe</span></div><div class="breadth-summary"><div><span>ADVANCES</span><strong id="breadth-advances">—</strong></div><div><span>DECLINES</span><strong id="breadth-declines">—</strong></div><div><span>UNCHANGED</span><strong id="breadth-unchanged">—</strong></div><div><span>ADV / DEC</span><strong id="breadth-ratio">—</strong></div></div><p id="breadth-note" class="panel-note">No imported NSE equity universe is available for breadth.</p></article>
+        </div>
+        <article class="panel live-market-panel" aria-label="Live market watchlist"><div class="panel-heading"><div><div class="eyebrow">ANGEL ONE MARKET FEED</div><h3>Live watchlist</h3></div><span class="status-pill" id="market-feed-pill">DISCONNECTED</span></div><p class="market-feed-note" id="market-feed-note">Synthetic research data is active. Authenticate and start the Angel One feed to receive live NSE/NFO ticks.</p><div class="table-scroll"><table class="live-market-table"><thead><tr><th>INSTRUMENT</th><th>SEGMENT</th><th>EXPIRY</th><th>STRIKE</th><th>LAST</th><th>OPEN INTEREST</th><th>BEST BID / ASK</th><th>MARKET TIME</th></tr></thead><tbody id="live-ticks"><tr><td colspan="8" class="empty-cell">No live ticks received.</td></tr></tbody></table></div></article>
       </section>
 
-      <section class="metrics" aria-label="Backtest results">
-        <article class="metric"><div class="metric-label">ENDING EQUITY <span>ⓘ</span></div><div class="metric-value" id="ending-equity">—</div><div class="metric-foot" id="equity-subtitle">Run a replay to calculate</div></article>
-        <article class="metric"><div class="metric-label">TOTAL RETURN <span>ⓘ</span></div><div class="metric-value" id="return-value">—</div><div class="metric-foot">After modeled fees and slippage</div></article>
-        <article class="metric"><div class="metric-label">MAX DRAWDOWN <span>ⓘ</span></div><div class="metric-value" id="drawdown-value">—</div><div class="metric-foot">Peak-to-trough equity decline</div></article>
-        <article class="metric"><div class="metric-label">CLOSED TRADES <span>ⓘ</span></div><div class="metric-value" id="trades-value">—</div><div class="metric-foot" id="win-rate">Win rate —</div></article>
+      <section class="dashboard-section" id="watchlist" aria-labelledby="watchlist-title">
+        <div class="section-heading"><div><div class="eyebrow">CONFIGURED INSTRUMENTS</div><h2 id="watchlist-title">Watchlist</h2></div><span class="section-meta" id="watchlist-count">Loading instruments</span></div>
+        <div class="watchlist-toolbar">
+          <label class="watchlist-search" for="watchlist-search"><span class="visually-hidden">Search watchlist</span><input id="watchlist-search" type="search" placeholder="Search symbol" autocomplete="off" /></label>
+          <label class="toolbar-select"><span>GROUP</span><select id="watchlist-group"><option value="ALL">All instruments</option><option value="INDEX">Indices</option><option value="EQUITY">Equities</option><option value="DERIVATIVE">F&amp;O</option><option value="DEMO">Demo</option></select></label>
+          <label class="toolbar-select"><span>SORT</span><select id="watchlist-sort"><option value="PINNED">Pinned first</option><option value="SYMBOL">Symbol</option><option value="CHANGE">Change</option></select></label>
+        </div>
+        <article class="panel watchlist-panel"><div class="table-scroll"><table class="watchlist-table"><thead><tr><th scope="col">PIN</th><th scope="col">INSTRUMENT</th><th scope="col">LAST / CLOSE · SOURCE</th><th scope="col">CHANGE VS PRIOR BAR</th><th scope="col">VOLUME</th><th scope="col">AS OF · IST</th></tr></thead><tbody id="watchlist-rows"><tr><td colspan="6" class="empty-cell">Loading configured instruments…</td></tr></tbody></table></div></article>
+        <p class="watchlist-footnote">Stored OHLCV is not a live quote. Live values appear only while a fresh feed tick is available.</p>
       </section>
 
-      <section class="work-grid" id="research">
-        <article class="panel chart-panel">
-          <div class="panel-heading"><div><div class="eyebrow">PERFORMANCE</div><h2>Equity curve</h2></div><div class="chart-meta"><span class="legend-dot"></span><span id="chart-caption">Backtest · DEMO</span><span class="period">240 bars</span></div></div>
-          <div class="chart-wrap"><svg id="equity-chart" viewBox="0 0 900 250" role="img" aria-label="Simulation equity curve"><text x="50%" y="50%" text-anchor="middle" class="chart-placeholder">Run a backtest to view performance</text></svg></div>
-          <div class="chart-footer"><span id="chart-start">STARTING EQUITY <strong>—</strong></span><span id="chart-end">LATEST EQUITY <strong>—</strong></span><span class="data-note"><span class="pulse"></span> SAMPLE HISTORY</span></div>
-        </article>
-
-        <article class="panel controls-panel" id="risk">
-          <div class="panel-heading"><div><div class="eyebrow">CONTROL PLANE</div><h2>Risk &amp; replay</h2></div><span class="status-pill" id="risk-status">READY</span></div>
-          <div class="strategy-summary"><div class="strategy-icon">↗</div><div><strong>SMA crossover</strong><small>Deterministic · long-only</small></div><span class="version">v1</span></div>
-          <div class="quant-summary" aria-label="Quantitative market snapshot">
-            <div><span>RSI · 14</span><strong id="feature-rsi">—</strong></div>
-            <div><span>ATR · 14</span><strong id="feature-atr">—</strong></div>
-            <div><span>VOL Z · 20</span><strong id="feature-volume">—</strong></div>
-            <div><span>REGIME</span><strong id="feature-regime">—</strong></div>
-          </div>
-          <div class="hypothesis-card"><div class="hypothesis-heading"><span class="eyebrow">HYPOTHESIS REVIEW</span><span class="status-pill" id="hypothesis-status">LOADING</span><button class="llm-review-button" id="llm-review-button" type="button" disabled title="Enable a model provider and connect a fresh market-data feed">Ask Copilot ↗</button></div><strong id="hypothesis-thesis">Loading deterministic analysis…</strong><small id="hypothesis-evidence">Evidence will reference source event IDs.</small></div>
-          <div class="control-line"><span>Fast / slow window</span><strong>8 / 21 bars</strong></div>
-          <div class="control-line"><span>Max order value</span><strong>10% of equity</strong></div>
-          <div class="control-line"><span>Max gross exposure</span><strong>50% of equity</strong></div>
-          <div class="control-line"><span>Cost model</span><strong>10 bps fee · 5 bps slip</strong></div>
-          <div class="risk-divider"></div>
-          <label class="switch-row" for="kill-switch"><span><strong>Emergency kill switch</strong><small>Block new simulated entries</small></span><input id="kill-switch" type="checkbox" /><span class="switch"></span></label>
-          <button class="button button-outline" id="paper-button">Run paper replay <span>→</span></button>
-          <div class="risk-footnote">Paper replay uses the same strategy and fills as backtesting.</div>
-        </article>
+      <section class="dashboard-section" id="instrument-detail" aria-labelledby="instrument-detail-title">
+        <div class="section-heading"><div><div class="eyebrow">HISTORICAL PRICE ACTION</div><h2 id="instrument-detail-title">Instrument Detail</h2></div><span class="section-meta" id="instrument-detail-meta">Waiting for stored history</span></div>
+        <div class="instrument-workspace">
+          <article class="panel instrument-chart-panel">
+            <div class="panel-heading"><div><div class="eyebrow">OHLCV · STORED HISTORY</div><h3 id="instrument-chart-symbol">—</h3></div><span class="table-count" id="instrument-chart-asof">No bars loaded</span></div>
+            <div class="instrument-chart-toolbar"><div class="timeframe-control" id="instrument-timeframes" role="group" aria-label="Stored candle timeframes"></div><div class="chart-overlays" id="instrument-overlays"><label><input type="checkbox" data-chart-overlay="sma20" checked /><span class="sma20-swatch"></span>SMA 20</label><label><input type="checkbox" data-chart-overlay="sma50" checked /><span class="sma50-swatch"></span>SMA 50</label></div></div>
+            <div class="instrument-chart-meta"><strong id="instrument-ohlc">OHLC unavailable</strong><span id="instrument-bar-count">No historical bars</span></div>
+            <div class="instrument-chart-wrap"><svg id="instrument-candles" viewBox="0 0 900 350" role="img" aria-label="Stored instrument candlestick chart"><text x="50%" y="50%" text-anchor="middle" class="chart-placeholder">Waiting for stored candles</text></svg></div>
+            <p class="instrument-chart-note" id="instrument-chart-note">Historical candles are not live quotes.</p>
+          </article>
+          <article class="panel instrument-indicator-panel"><div class="panel-heading"><div><div class="eyebrow">QUANTITATIVE SNAPSHOT</div><h3>Indicators</h3></div><span class="table-count" id="instrument-indicator-timeframe">—</span></div>
+            <div class="instrument-indicators">
+              <div><span>RSI · 14</span><strong id="detail-rsi">—</strong></div><div><span>MACD · 12/26</span><strong id="detail-macd">—</strong></div>
+              <div><span>ATR · 14</span><strong id="detail-atr">—</strong></div><div><span>ATR · %</span><strong id="detail-atr-pct">—</strong></div>
+              <div><span>SMA · 20</span><strong id="detail-sma20">—</strong></div><div><span>SMA · 50</span><strong id="detail-sma50">—</strong></div>
+              <div><span>EMA · 12 / 26</span><strong id="detail-ema">—</strong></div><div><span>BOLLINGER · 20</span><strong id="detail-bollinger">—</strong></div>
+              <div><span>VOLUME Z · 20</span><strong id="detail-volume">—</strong></div><div><span>MOMENTUM · 20</span><strong id="detail-momentum">—</strong></div>
+            </div>
+            <p class="panel-note" id="instrument-indicator-note">Indicators require sufficient stored history.</p>
+          </article>
+        </div>
+        <article class="panel news-panel instrument-news-panel" id="news"><div class="panel-heading"><div><div class="eyebrow">TAGGED RESEARCH</div><h3 id="news-title">Instrument News</h3></div><div class="news-actions"><span class="table-count" id="news-count">0 items</span><button class="small-action" id="news-add-open" type="button">Add article</button></div></div><div id="news-list" class="news-list"><div class="empty-cell">No instrument news has been ingested.</div></div></article>
       </section>
 
-      <section class="bottom-grid" id="activity">
-        <article class="panel table-panel"><div class="panel-heading"><div><div class="eyebrow">EXECUTION LOG</div><h2>Closed trades</h2></div><span class="table-count" id="trade-count">0 records</span></div><div class="table-scroll"><table><thead><tr><th>INSTRUMENT</th><th>ENTRY</th><th>EXIT</th><th>QTY</th><th>NET P&amp;L · UNITS</th></tr></thead><tbody id="trades-table"><tr><td colspan="5" class="empty-cell">Run a simulation to populate the trade log.</td></tr></tbody></table></div></article>
-        <article class="panel events-panel"><div class="panel-heading"><div><div class="eyebrow">AUDIT TRAIL</div><h2>Recent events</h2></div><a class="text-link" href="#activity" id="events-refresh">Refresh ↻</a></div><div id="event-list" class="event-list"><div class="empty-cell">No simulation events recorded.</div></div></article>
-        <article class="panel news-panel"><div class="panel-heading"><div><div class="eyebrow">EXTERNAL CONTEXT</div><h2>News intelligence</h2></div><div class="news-actions"><span class="table-count" id="news-count">0 items</span><button class="small-action" id="news-add-open" type="button">Add article</button></div></div><div id="news-list" class="news-list"><div class="empty-cell">No news has been ingested.</div></div></article>
+      <section class="dashboard-section" id="portfolio" aria-labelledby="portfolio-title">
+        <div class="section-heading"><div><div class="eyebrow">BROKER SNAPSHOT</div><h2 id="portfolio-title">Portfolio</h2></div><button class="small-action" id="portfolio-refresh" type="button" disabled title="Authenticate first; this action only reads a broker snapshot">Refresh snapshot</button></div>
+        <p class="section-note" id="portfolio-status">Unavailable · authenticate with Angel One to request a read-only positions snapshot.</p>
+        <div class="portfolio-grid"><article class="portfolio-stat"><span>POSITIONS</span><strong id="portfolio-position-count">—</strong></article><article class="portfolio-stat"><span>UNREALIZED P&amp;L</span><strong id="portfolio-pnl">—</strong></article><article class="portfolio-stat"><span>MARGIN</span><strong id="portfolio-margin">Unavailable</strong></article><article class="portfolio-stat"><span>GROSS EXPOSURE</span><strong id="portfolio-exposure">—</strong></article></div>
+        <article class="panel table-panel"><div class="panel-heading"><div><div class="eyebrow">POSITIONS &amp; HOLDINGS</div><h3>Broker-reported inventory</h3></div><span class="table-count" id="portfolio-captured">No snapshot</span></div><div class="table-scroll"><table><thead><tr><th>TYPE</th><th>SYMBOL</th><th>QUANTITY</th><th>AVERAGE</th><th>LAST PRICE</th><th>MARKET VALUE</th><th>UNREALIZED P&amp;L</th></tr></thead><tbody id="portfolio-rows"><tr><td colspan="7" class="empty-cell">No broker snapshot loaded.</td></tr></tbody></table></div></article>
+      </section>
+
+      <section class="dashboard-section" id="signals" aria-labelledby="signals-title">
+        <div class="section-heading"><div><div class="eyebrow">DETERMINISTIC SIGNALS · OPTIONAL MODEL REVIEW</div><h2 id="signals-title">Trade Candidates &amp; Decision Workspace</h2></div><span class="section-meta" id="signal-instrument">—</span></div>
+        <div class="signals-columns">
+          <article class="panel candidate-queue-panel"><div class="panel-heading"><div><div class="eyebrow">PINNED &amp; SELECTED · 1D</div><h3>Candidate screen</h3></div><button class="small-action" id="candidate-refresh" type="button" title="Recheck stored daily signals; no orders are sent">Refresh screen</button></div><div class="candidate-queue-summary"><span id="candidate-queue-count">Waiting for stored signals</span><span class="table-count">SMA 8 / 21</span></div><div class="candidate-queue-list" id="candidate-list" aria-live="polite"><div class="empty-cell">Candidate coverage will load from pinned instruments.</div></div><p class="candidate-screen-note" id="candidate-screen-note">A strategy signal is not a validated trade or calibrated probability.</p></article>
+          <article class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">TRADE HYPOTHESIS</div><h3>Candidate review</h3></div><span class="status-pill" id="hypothesis-status">LOADING</span></div>
+            <div class="candidate-summary"><div><span class="eyebrow">DECISION</span><strong id="hypothesis-decision">NO TRADE</strong></div><p id="hypothesis-thesis">Loading deterministic analysis…</p><button class="llm-review-button" id="llm-review-button" type="button" disabled title="Enable a model provider and connect a fresh market-data feed">Ask Copilot ↗</button></div>
+            <div class="hypothesis-matrix">
+              <div class="hypothesis-detail"><span>WHY · EVIDENCE</span><p id="hypothesis-why">Waiting for evidence.</p></div>
+              <div class="hypothesis-detail"><span>COUNTER-EVIDENCE</span><p id="hypothesis-counter">Waiting for disconfirming evidence.</p></div>
+              <div class="hypothesis-detail"><span>HISTORICAL DATA</span><p id="hypothesis-historical">Similar historical setups unavailable.</p><div id="historical-analogue-list" class="analogue-list"></div></div>
+              <div class="hypothesis-detail"><span>PROBABILITY</span><p id="hypothesis-probability">Not calibrated</p></div>
+              <div class="hypothesis-detail"><span>EXPECTED VALUE · NET OF COSTS</span><p id="hypothesis-expected-value">Not calculated</p></div>
+              <div class="hypothesis-detail"><span>RISK · MAXIMUM LOSS</span><p id="hypothesis-risk">Not calculated</p></div>
+              <div class="hypothesis-detail"><span>POSITION SIZE</span><p id="hypothesis-size">Not calculated</p></div>
+              <div class="hypothesis-detail"><span>VALIDATION</span><p id="hypothesis-evidence">Validation details unavailable.</p></div>
+            </div>
+            <div class="quant-summary" aria-label="Quantitative market snapshot"><div><span>RSI · 14</span><strong id="feature-rsi">—</strong></div><div><span>ATR · 14</span><strong id="feature-atr">—</strong></div><div><span>VOL Z · 20</span><strong id="feature-volume">—</strong></div><div><span>REGIME</span><strong id="feature-regime">—</strong></div></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="dashboard-section" id="risk" aria-labelledby="risk-title">
+        <div class="section-heading"><div><div class="eyebrow">GUARDRAILS</div><h2 id="risk-title">Risk</h2></div><span class="status-pill" id="risk-status">READY</span></div>
+        <div class="risk-columns"><article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">CONFIGURED LIMITS</div><h3>Limits &amp; utilization</h3></div></div><div class="control-line"><span>Max position value</span><strong id="risk-max-position">—</strong></div><div class="control-line"><span>Max gross exposure</span><strong id="risk-max-exposure">—</strong></div><div class="control-line"><span>Current position utilization</span><strong id="risk-position-utilization">Unavailable</strong></div><div class="control-line"><span>Current exposure utilization</span><strong id="risk-exposure-utilization">Unavailable</strong></div><p class="panel-note">Utilization needs an authenticated portfolio snapshot and configured equity.</p></article>
+          <article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">ENTRY CONTROL</div><h3>Kill switch</h3></div></div><label class="switch-row" for="kill-switch"><span><strong>Emergency kill switch</strong><small>Block new simulated entries</small></span><input id="kill-switch" type="checkbox" /><span class="switch"></span></label><div class="risk-divider"></div><div class="control-line"><span>Execution mode</span><strong>Simulation only</strong></div><p class="risk-footnote">The kill switch blocks new simulated entries. Live broker orders are disabled.</p></article></div>
+      </section>
+
+      <section class="dashboard-section" id="orders" aria-labelledby="orders-title">
+        <div class="section-heading"><div><div class="eyebrow">PAPER EXECUTION · BROKER ORDERS OFF</div><h2 id="orders-title">Orders &amp; Execution</h2></div><span class="status-pill disconnected">LIVE DISABLED</span></div>
+        <div class="orders-columns"><article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">SIMULATION ONLY</div><h3>Paper replay</h3></div><span class="status-pill disconnected" id="paper-oms-state">NO PAPER RUNS</span></div><p class="paper-oms-summary" id="paper-oms-summary">No simulated order lifecycle has been recorded.</p><div class="control-line"><span>Latest replay</span><strong id="paper-replay-mode">Not run</strong></div><div class="control-line"><span>Broker order submission</span><strong>Disabled</strong></div><button class="button button-dark" id="paper-button" type="button">Run paper replay <span>→</span></button><p class="risk-footnote">Uses the selected instrument's stored bars. Simulated fills do not reach a broker.</p></article><article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">AUDIT EVENTS · PAPER RUNS</div><h3>Order timeline</h3></div><span class="table-count" id="paper-order-count">0 records</span></div><div class="paper-timeline" id="paper-order-timeline" aria-live="polite"><div class="empty-cell">No paper replay events recorded.</div></div></article></div>
+      </section>
+
+      <section class="dashboard-section" id="strategy-performance" aria-labelledby="performance-title">
+        <div class="section-heading"><div><div class="eyebrow">REPLAY &amp; EVALUATION</div><h2 id="performance-title">Strategy Performance</h2></div><button class="button button-dark" id="backtest-button" type="button"><span>▶</span> Run backtest</button></div>
+        <div class="metrics" aria-label="Backtest results"><article class="metric"><div class="metric-label">ENDING EQUITY</div><div class="metric-value" id="ending-equity">—</div><div class="metric-foot" id="equity-subtitle">Run a replay to calculate</div></article><article class="metric"><div class="metric-label">TOTAL RETURN</div><div class="metric-value" id="return-value">—</div><div class="metric-foot">After modeled fees and slippage</div></article><article class="metric"><div class="metric-label">MAX DRAWDOWN</div><div class="metric-value" id="drawdown-value">—</div><div class="metric-foot">Peak-to-trough equity decline</div></article><article class="metric"><div class="metric-label">CLOSED TRADES</div><div class="metric-value" id="trades-value">—</div><div class="metric-foot" id="win-rate">Win rate —</div></article></div>
+        <div class="performance-columns"><article class="panel chart-panel"><div class="panel-heading"><div><div class="eyebrow">SMA CROSSOVER · DETERMINISTIC</div><h3>Equity curve</h3></div><div class="chart-meta"><span class="legend-dot"></span><span id="chart-caption">Backtest · DEMO</span><span class="period">240 bars</span></div></div><div class="chart-wrap"><svg id="equity-chart" viewBox="0 0 900 250" role="img" aria-label="Simulation equity curve"><text x="50%" y="50%" text-anchor="middle" class="chart-placeholder">Run a backtest to view performance</text></svg></div><div class="chart-footer"><span id="chart-start">STARTING EQUITY <strong>—</strong></span><span id="chart-end">LATEST EQUITY <strong>—</strong></span><span class="data-note"><span class="pulse"></span> SAMPLE HISTORY</span></div></article>
+          <article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">MODEL PERFORMANCE</div><h3>Evaluation status</h3></div><span class="status-pill disconnected" id="model-status">NOT EVALUATED</span></div><div class="control-line"><span>Provider</span><strong id="model-provider">—</strong></div><div class="control-line"><span>Model</span><strong id="model-name">Not configured</strong></div><div class="control-line"><span>Calibration metrics</span><strong>Unavailable</strong></div><p class="panel-note">No scored out-of-sample model evaluation is exposed. Raw confidence is not a calibrated probability.</p></article></div>
+        <article class="panel table-panel walk-forward-panel"><div class="panel-heading"><div><div class="eyebrow">OUT-OF-SAMPLE · EXPANDING WINDOW</div><h3>Walk-forward evaluation</h3></div><button class="button button-dark" id="walk-forward-button" type="button">Run walk-forward</button></div><p class="walk-forward-summary" id="walk-forward-summary" aria-live="polite">No walk-forward result yet. Uses 60 training bars and non-overlapping 20-bar test windows.</p><div class="table-scroll"><table><thead><tr><th>FOLD</th><th>TRAIN BARS</th><th>TEST WINDOW</th><th>TEST BARS</th><th>RETURN</th><th>MAX DRAWDOWN</th><th>TRADES</th><th>RISK REJECTIONS</th></tr></thead><tbody id="walk-forward-folds"><tr><td colspan="8" class="empty-cell">Run an evaluation to inspect out-of-sample folds.</td></tr></tbody></table></div></article>
+        <article class="panel table-panel"><div class="panel-heading"><div><div class="eyebrow">PAPER EXECUTION LOG</div><h3>Closed trades</h3></div><span class="table-count" id="trade-count">0 records</span></div><div class="table-scroll"><table><thead><tr><th>INSTRUMENT</th><th>ENTRY</th><th>EXIT</th><th>QTY</th><th>HOLD</th><th>NET P&amp;L · UNITS</th><th>TRADE RETURN</th><th>EXIT REASON</th></tr></thead><tbody id="trades-table"><tr><td colspan="8" class="empty-cell">Run a simulation to populate the trade log.</td></tr></tbody></table></div></article>
+      </section>
+
+      <section class="dashboard-section" id="system-health" aria-labelledby="health-title">
+        <div class="section-heading"><div><div class="eyebrow">LOCAL SERVICES</div><h2 id="health-title">System Health</h2></div><a class="text-link" href="#system-health" id="events-refresh">Refresh audit trail ↻</a></div>
+        <div class="health-grid"><article class="health-item"><span>API SERVICE</span><strong id="health-api">Checking</strong></article><article class="health-item"><span>MARKET DATA</span><strong id="health-market">Checking</strong></article><article class="health-item"><span>ANGEL ONE</span><strong id="health-angel">Checking</strong></article><article class="health-item"><span>LLM PROVIDER</span><strong id="health-llm">Checking</strong></article><article class="health-item"><span>INDIA REFERENCE DATA</span><strong id="health-reference">Checking</strong></article><article class="health-item"><span>BROKER EXECUTION</span><strong id="health-execution">Disabled</strong></article></div>
+        <div class="health-columns"><article class="panel events-panel"><div class="panel-heading"><div><div class="eyebrow">AUDIT TRAIL</div><h3>Recent events</h3></div><span class="table-count">Local event store</span></div><div id="event-list" class="event-list"><div class="empty-cell">No simulation events recorded.</div></div></article><article class="panel data-panel"><div class="panel-heading"><div><div class="eyebrow">DATA QUALITY</div><h3>Tick quality</h3></div></div><div class="control-line"><span>Accepted</span><strong id="quality-accepted">—</strong></div><div class="control-line"><span>Duplicates</span><strong id="quality-duplicates">—</strong></div><div class="control-line"><span>Rejected / invalid</span><strong id="quality-invalid">—</strong></div><div class="control-line"><span>Stale</span><strong id="quality-stale">—</strong></div><div class="alert-preferences-heading"><span class="eyebrow">ALERT PREFERENCES · THIS BROWSER</span><span class="table-count" id="alert-count">0 matches</span></div><div class="alert-preferences"><label><input id="alerts-feed-toggle" type="checkbox" checked />Feed interruptions</label><label><input id="alerts-simulation-toggle" type="checkbox" checked />Simulation risk / liquidity</label></div><p class="alert-note">Recent audit matches only; this is not an active incident monitor.</p><div id="alert-list" class="event-list alert-list" aria-live="polite"><div class="empty-cell">No matching audit alerts.</div></div></article></div>
       </section>
       <dialog class="login-dialog news-dialog" id="news-dialog" aria-labelledby="news-dialog-title">
         <form id="news-form">
@@ -119,6 +201,7 @@
       <footer><span>NORTHSTAR RESEARCH PLATFORM</span><span>Local prototype · No investment advice · No live execution</span></footer>
     </main>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script src="/static/app.js" defer></script>
+    <script src="/static/api.js?v=desk-phase5b-20261001" defer></script>
+    <script src="/static/app.js?v=desk-phase7c-20261001" defer></script>
   </body>
 </html>

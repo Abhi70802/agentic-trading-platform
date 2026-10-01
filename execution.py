@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Literal, Protocol
 from uuid import uuid4
 
 from compliance import MarketCompliancePolicy
 from core import RiskEngine
+from marketdata import MarketDataQualityGate
 from portfolio import PortfolioSnapshot, PositionSizer
 
 
@@ -25,6 +27,18 @@ class OrderIntent:
     order_type: str
     entry_price: float
     stop_price: float
+    market_data_timestamp: str | None = None
+
+    def __post_init__(self) -> None:
+        if any(not _finite_number(value) or value <= 0 for value in (self.entry_price, self.stop_price)):
+            raise ValueError("Order entry and stop prices must be finite and positive")
+        if self.market_data_timestamp is not None:
+            if not isinstance(self.market_data_timestamp, str):
+                raise ValueError("Market data timestamp must be an ISO-8601 string")
+            try:
+                datetime.fromisoformat(self.market_data_timestamp.replace("Z", "+00:00"))
+            except ValueError as error:
+                raise ValueError("Market data timestamp must be an ISO-8601 string") from error
 
 
 @dataclass(frozen=True)
@@ -43,6 +57,14 @@ class Order:
     average_fill_price: float | None = None
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        for name, value in (("quantity", self.quantity), ("filled quantity", self.filled_quantity)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"Order {name} must be a non-negative integer")
+        for name, value in (("requested price", self.requested_price), ("average fill price", self.average_fill_price)):
+            if value is not None and (not _finite_number(value) or value <= 0):
+                raise ValueError(f"Order {name} must be finite and positive")
+
 
 class BrokerAdapter(Protocol):
     def submit(self, order: Order, *, price: float, liquidity_quantity: int | None = None) -> Order: ...
@@ -50,12 +72,24 @@ class BrokerAdapter(Protocol):
 
 class PaperBrokerAdapter:
     def __init__(self, slippage_bps: float = 5.0):
-        if slippage_bps < 0:
-            raise ValueError("slippage_bps cannot be negative")
+        if not _finite_number(slippage_bps) or slippage_bps < 0:
+            raise ValueError("slippage_bps must be finite and non-negative")
         self.slippage_bps = slippage_bps
         self._orders_by_client_id: dict[str, Order] = {}
 
     def submit(self, order: Order, *, price: float, liquidity_quantity: int | None = None) -> Order:
+        if not _finite_number(price) or price <= 0:
+            return Order(**{
+                **order.__dict__,
+                "status": "REJECTED",
+                "reason": "Invalid finite fill price",
+            })
+        if liquidity_quantity is not None and (
+            not isinstance(liquidity_quantity, int)
+            or isinstance(liquidity_quantity, bool)
+            or liquidity_quantity < 0
+        ):
+            raise ValueError("Liquidity quantity must be a non-negative integer")
         prior = self._orders_by_client_id.get(order.client_order_id)
         if prior:
             same_intent = all(getattr(prior, field) == getattr(order, field) for field in (
@@ -68,13 +102,13 @@ class PaperBrokerAdapter:
                 "status": "REJECTED",
                 "reason": "Idempotency key was reused for a different order intent",
             })
-        if price <= 0:
-            return self._save(Order(**{**order.__dict__, "status": "REJECTED", "reason": "Invalid fill price"}))
         fill_quantity = order.quantity if liquidity_quantity is None else min(order.quantity, max(0, liquidity_quantity))
         if fill_quantity == 0:
             return self._save(Order(**{**order.__dict__, "status": "REJECTED", "reason": "No available simulated liquidity"}))
         direction = 1 if order.side == "BUY" else -1
         fill_price = price * (1 + direction * self.slippage_bps / 10_000)
+        if not _finite_number(fill_price) or fill_price <= 0:
+            return Order(**{**order.__dict__, "status": "REJECTED", "reason": "Non-finite simulated fill price"})
         status: OrderStatus = "FILLED" if fill_quantity == order.quantity else "PARTIALLY_FILLED"
         return self._save(Order(**{
             **order.__dict__,
@@ -118,7 +152,14 @@ class ExecutionService:
         human_approved: bool = False,
         liquidity_quantity: int | None = None,
     ) -> Order:
-        created = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+        if liquidity_quantity is not None and (
+            not isinstance(liquidity_quantity, int)
+            or isinstance(liquidity_quantity, bool)
+            or liquidity_quantity < 0
+        ):
+            raise ValueError("Liquidity quantity must be a non-negative integer")
+        arrival_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        created = arrival_time.isoformat()
         order = Order(
             order_id=str(uuid4()),
             client_order_id=intent.client_order_id,
@@ -139,6 +180,11 @@ class ExecutionService:
             return Order(**{**order.__dict__, "reason": "Autonomous execution is disabled in this build"})
         if not data_is_fresh:
             return Order(**{**order.__dict__, "reason": "Market data is stale"})
+        if intent.market_data_timestamp is None or not MarketDataQualityGate.is_fresh(
+            intent.market_data_timestamp,
+            now=arrival_time,
+        ):
+            return Order(**{**order.__dict__, "reason": "Market data is stale or its timestamp is missing"})
         if intent.side != "BUY":
             return Order(**{**order.__dict__, "reason": "This paper adapter only supports long entries"})
         snapshot = portfolio.as_dict()
@@ -158,7 +204,7 @@ class ExecutionService:
         if quantity <= 0:
             return Order(**{**order.__dict__, "reason": risk.reason if not risk.approved else "Position sizing permits no shares"})
         compliance = policy.evaluate(
-            now=now or datetime.now(timezone.utc),
+            now=arrival_time,
             order_type=intent.order_type,
             quantity=quantity,
             notional=quantity * intent.entry_price,
@@ -168,3 +214,12 @@ class ExecutionService:
             return Order(**{**order.__dict__, "reason": "; ".join(compliance.reasons)})
         approved_order = Order(**{**order.__dict__, "quantity": quantity, "status": "FILLED"})
         return self.paper_broker.submit(approved_order, price=intent.entry_price, liquidity_quantity=liquidity_quantity)
+
+
+def _finite_number(value) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return isfinite(value)
+    except (TypeError, ValueError, OverflowError):
+        return False

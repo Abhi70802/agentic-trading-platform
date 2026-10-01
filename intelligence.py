@@ -34,9 +34,13 @@ EVENT_RULES = (
     ("GUIDANCE_REDUCTION", ("guidance cut", "cuts guidance", "lowered guidance", "outlook reduced"), "NEGATIVE", "HIGH", "days_to_weeks", 0.88),
     ("EARNINGS_BEAT", ("earnings beat", "beats estimates", "profit rose", "record revenue"), "POSITIVE", "MEDIUM", "days_to_weeks", 0.82),
     ("REGULATORY_ACTION", ("regulatory action", "investigation", "antitrust", "fined", "license revoked"), "NEGATIVE", "HIGH", "weeks_to_months", 0.84),
+    ("MANAGEMENT_CHANGE", ("management change", "new ceo", "ceo resignation", "chief executive appointed"), "NEUTRAL", "MEDIUM", "weeks_to_months", 0.74),
     ("MERGER_ACQUISITION", ("acquisition", "merger", "to acquire", "takeover offer"), "POSITIVE", "HIGH", "weeks_to_months", 0.80),
+    ("PRODUCT_LAUNCH", ("product launch", "launches new product", "launched a new product"), "POSITIVE", "MEDIUM", "days_to_weeks", 0.72),
+    ("LARGE_ORDER", ("large order", "major order", "order win", "wins contract"), "POSITIVE", "HIGH", "days_to_weeks", 0.80),
     ("CREDIT_DOWNGRADE", ("downgrade", "credit rating cut", "default risk"), "NEGATIVE", "HIGH", "weeks_to_months", 0.86),
-    ("RATE_DECISION", ("interest rate", "rate decision", "policy rate", "central bank"), "NEUTRAL", "HIGH", "days_to_weeks", 0.75),
+    ("DIVIDEND_ANNOUNCEMENT", ("dividend announcement", "announces dividend", "dividend declared"), "POSITIVE", "MEDIUM", "days_to_weeks", 0.76),
+    ("RATE_DECISION", ("interest rate", "rate decision", "policy rate", "central bank", "monetary policy"), "NEUTRAL", "HIGH", "days_to_weeks", 0.75),
 )
 NEWS_FRESHNESS_SECONDS = 86_400
 
@@ -79,10 +83,24 @@ def ingest_news(payload: dict, *, ingested_at: str | None = None) -> tuple[NewsI
 
 def classify_news(item: NewsItem) -> dict:
     text = f"{item.title} {item.content}".casefold()
-    matched = next((rule for rule in EVENT_RULES if any(phrase in text for phrase in rule[1])), None)
-    if matched:
-        event_type, _, sentiment, severity, horizon, base_confidence = matched
-        confidence = round(base_confidence * (0.5 + item.source_reliability / 2), 3)
+    matched_rules = [rule for rule in EVENT_RULES if any(phrase in text for phrase in rule[1])]
+    extracted_events = []
+    for event_rule in matched_rules:
+        event_type, _, sentiment, severity, horizon, base_confidence = event_rule
+        extracted_events.append({
+            "event_type": event_type,
+            "sentiment": sentiment,
+            "severity": severity,
+            "expected_horizon": horizon,
+            "confidence": round(base_confidence * (0.5 + item.source_reliability / 2), 3),
+        })
+    if extracted_events:
+        primary = extracted_events[0]
+        event_type = primary["event_type"]
+        sentiment = primary["sentiment"]
+        severity = primary["severity"]
+        horizon = primary["expected_horizon"]
+        confidence = primary["confidence"]
     else:
         event_type, sentiment, severity, horizon, confidence = "UNCLASSIFIED", "NEUTRAL", "LOW", "unknown", 0.0
     publication_lag = (
@@ -98,6 +116,7 @@ def classify_news(item: NewsItem) -> dict:
         "sector": item.sector,
         "country": item.country,
         "confidence": confidence,
+        "extracted_events": extracted_events,
         "source_reliability": item.source_reliability,
         "publication_lag_seconds": round(publication_lag, 3),
         "is_stale": publication_lag < 0 or publication_lag > NEWS_FRESHNESS_SECONDS,
@@ -108,16 +127,29 @@ def classify_news(item: NewsItem) -> dict:
 def build_hypothesis(candles: list[Candle], strategy: Strategy, news_events: list[dict] | None = None) -> dict:
     if not candles:
         raise ValueError("No market data is available")
-    ordered = sorted(candles, key=lambda item: item.timestamp)
+    ordered = sorted(candles, key=lambda item: _utc_datetime(item.timestamp))
     snapshot = feature_snapshot(ordered)
     action = strategy.action(ordered)
     latest = ordered[-1]
+    decision_time = _utc_datetime(latest.timestamp)
     features = snapshot["features"]
     atr = features["atr_14"]
-    usable_news = [
-        event for event in (news_events or [])
-        if latest.symbol in event.get("instruments", []) and not event.get("is_stale", True)
-    ]
+    usable_news = []
+    for event in news_events or []:
+        if latest.symbol not in event.get("instruments", []) or event.get("is_stale", True):
+            continue
+        eligible_evidence = []
+        for evidence in event.get("evidence", []):
+            if not isinstance(evidence, dict) or not isinstance(evidence.get("published_at"), str):
+                continue
+            try:
+                published_at = _utc_datetime(evidence["published_at"])
+            except ValueError:
+                continue
+            if published_at <= decision_time:
+                eligible_evidence.append(evidence)
+        if eligible_evidence:
+            usable_news.append({**event, "evidence": eligible_evidence})
     supporting = [{"source_id": f"candle:{latest.symbol}:{latest.timestamp}", "claim": "Latest normalized OHLCV bar used for the signal"}]
     supporting.extend(
         {"source_id": evidence["article_id"], "claim": f"{event['event_type']} · {event['sentiment']}"}
@@ -233,3 +265,10 @@ def _iso(value: object) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _utc_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

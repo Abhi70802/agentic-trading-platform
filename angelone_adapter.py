@@ -7,8 +7,10 @@ import re
 import importlib.util
 import socket
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from math import isfinite
 from pathlib import Path
 from typing import Callable
@@ -16,6 +18,17 @@ from uuid import getnode, uuid4
 from zoneinfo import ZoneInfo
 
 from kite_adapter import DEFAULT_OPTION_UNDERLYINGS, select_nearest_option_contracts
+from india_market import (
+    AssetType,
+    Contract,
+    Exchange,
+    ExpiryCalendar,
+    IndiaMarketPolicy,
+    Instrument,
+    LotSize,
+    OptionType,
+    TickSize,
+)
 
 
 INSTRUMENT_MASTER_URL = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -93,6 +106,21 @@ class AngelOneRestClient:
             raise RuntimeError(f"Angel One request was rejected (HTTP {response.status_code}, code {error_code})")
         return body
 
+    def _get(self, path: str) -> dict:
+        try:
+            response = self._http.get(
+                f"https://apiconnect.angelone.in{path}",
+                headers=self._headers(authenticated=True),
+                timeout=10,
+            )
+            body = response.json()
+        except Exception as error:
+            raise RuntimeError("Angel One request failed; response details were suppressed") from error
+        if response.status_code >= 400 or not isinstance(body, dict) or body.get("status") is not True:
+            error_code = body.get("errorcode", "unknown") if isinstance(body, dict) else "invalid_response"
+            raise RuntimeError(f"Angel One request was rejected (HTTP {response.status_code}, code {error_code})")
+        return body
+
     def generateSession(self, client_code: str, pin: str, totp: str) -> dict:
         response = self._post(
             "/rest/auth/angelbroking/user/v1/loginByPassword",
@@ -117,6 +145,12 @@ class AngelOneRestClient:
 
     def getOIData(self, params: dict) -> dict:
         return self._post("/rest/secure/angelbroking/historical/v1/getOIData", params, authenticated=True)
+
+    def getPosition(self) -> dict:
+        return self._get("/rest/secure/angelbroking/order/v1/getPosition")
+
+    def getHolding(self) -> dict:
+        return self._get("/rest/secure/angelbroking/portfolio/v1/getHolding")
 
     def terminateSession(self, client_code: str) -> dict:
         response = self._post(
@@ -202,6 +236,10 @@ class AngelOneMarketDataAdapter:
         websocket_factory=None,
         instrument_loader: Callable[[], list[dict]] | None = None,
         max_quote_age_seconds: int = 30,
+        fallback_interval_seconds: float = 5,
+        stale_tick_seconds: float = 15,
+        max_reconnect_attempts: int = 5,
+        reconnect_backoff_seconds: float = 1,
     ):
         if not api_key:
             raise ValueError("Angel One SmartAPI key is required")
@@ -213,8 +251,29 @@ class AngelOneMarketDataAdapter:
         self.session: AngelOneSession | None = None
         self.websocket = None
         self._websocket_thread: threading.Thread | None = None
+        self._fallback_thread: threading.Thread | None = None
+        self._stream_stop: threading.Event | None = None
+        self._stream_connected = threading.Event()
+        self._last_tick_monotonic: float | None = None
+        self._last_pong_monotonic: float | None = None
+        self.fallback_interval_seconds = max(1.0, fallback_interval_seconds)
+        self.stale_tick_seconds = max(1.0, stale_tick_seconds)
+        self.max_reconnect_attempts = max(1, max_reconnect_attempts)
+        self.reconnect_backoff_seconds = max(0.1, reconnect_backoff_seconds)
         self.spot_reference_stale = False
         self.spot_reference_age_seconds: dict[str, float] = {}
+
+    @property
+    def feed_running(self) -> bool:
+        stop_event = self._stream_stop
+        return bool(
+            stop_event is not None
+            and not stop_event.is_set()
+            and any(
+                thread is not None and thread.is_alive()
+                for thread in (self._websocket_thread, self._fallback_thread)
+            )
+        )
 
     @classmethod
     def from_environment(cls) -> AngelOneMarketDataAdapter:
@@ -253,9 +312,20 @@ class AngelOneMarketDataAdapter:
         return self.session
 
     def logout(self) -> None:
+        if self._stream_stop is not None:
+            self._stream_stop.set()
+        self._stream_connected.clear()
         if self.websocket is not None:
-            self.websocket.close_connection()
-            self.websocket = None
+            try:
+                self.websocket.close_connection()
+            except Exception:
+                pass
+            finally:
+                self.websocket = None
+        current_thread = threading.current_thread()
+        for thread in (self._websocket_thread, self._fallback_thread):
+            if thread is not None and thread is not current_thread and thread.is_alive():
+                thread.join(timeout=3)
         if self.session is not None:
             try:
                 self._client.terminateSession(self.session.client_code)
@@ -279,6 +349,49 @@ class AngelOneMarketDataAdapter:
         if not isinstance(data, list):
             raise RuntimeError("Angel One returned an invalid instrument master")
         return data
+
+    def normalized_reference_data(
+        self,
+        *,
+        price_scale: Decimal,
+        as_of: date | None = None,
+    ) -> tuple[IndiaMarketPolicy, dict[str, int]]:
+        return normalize_angelone_instrument_master(
+            self.instrument_master(),
+            price_scale=price_scale,
+            as_of=as_of,
+        )
+
+    def read_portfolio_snapshot(self) -> dict:
+        """Read current broker positions and holdings; this method never submits or changes orders."""
+        self._require_session()
+        positions_response = self._client.getPosition()
+        holdings_response = self._client.getHolding()
+        position_rows = _portfolio_response_rows(positions_response, "net")
+        holding_rows = _portfolio_response_rows(holdings_response, "holdings")
+        rejected = {"positions": 0, "holdings": 0}
+        positions = []
+        holdings = []
+        for row in position_rows:
+            normalized = _normalize_broker_position(row, source="POSITION")
+            if normalized is None:
+                rejected["positions"] += 1
+            elif normalized["quantity"] != 0:
+                positions.append(normalized)
+        for row in holding_rows:
+            normalized = _normalize_broker_position(row, source="HOLDING")
+            if normalized is None:
+                rejected["holdings"] += 1
+            elif normalized["quantity"] != 0:
+                holdings.append(normalized)
+        return {
+            "provider": "angelone_smartapi",
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "positions": positions,
+            "holdings": holdings,
+            "rejected_rows": rejected,
+            "orders_enabled": False,
+        }
 
     def initial_option_watchlist(
         self,
@@ -488,6 +601,8 @@ class AngelOneMarketDataAdapter:
         on_status: Callable[[str, dict], None] | None = None,
     ):
         session = self._require_session()
+        if self._websocket_thread is not None and self._websocket_thread.is_alive():
+            raise RuntimeError("Angel One market stream is already running")
         if self._websocket_factory is None:
             raise RuntimeError("Angel One WebSocket SDK is not installed")
         if not instruments:
@@ -500,43 +615,222 @@ class AngelOneMarketDataAdapter:
             exchange_type = 1 if item["exchange"] == "NSE" else 2 if item["exchange"] == "NFO" else 3
             token_groups.setdefault(exchange_type, []).append(str(item["instrument_token"]))
         token_list = [{"exchangeType": key, "tokens": values} for key, values in token_groups.items()]
-        socket = self._websocket_factory(f"Bearer {session.auth_token}", self._api_key, session.client_code, session.feed_token)
-        mode = socket.SNAP_QUOTE
+        stop_event = threading.Event()
+        self._stream_stop = stop_event
+        self._last_tick_monotonic = None
 
-        def on_open(wsapp) -> None:
-            socket.subscribe("northstar1", mode, token_list)
+        def report(event_type: str, payload: dict | None = None) -> None:
             if on_status:
-                on_status("market.connected", {"subscriptions": len(instruments), "mode": "snap_quote"})
+                on_status(event_type, payload or {})
 
-        def on_data(_wsapp, message) -> None:
-            try:
-                token = int(message["token"])
-                metadata = token_map.get(token)
-                if metadata is None:
-                    if on_status:
-                        on_status("market.unknown_instrument", {"instrument_token": token})
-                    return
-                on_tick(self.normalize_tick(message, metadata))
-            except (KeyError, TypeError, ValueError, OverflowError):
-                if on_status:
-                    on_status("market.invalid_tick", {})
+        def make_socket():
+            socket = self._websocket_factory(
+                f"Bearer {session.auth_token}", self._api_key, session.client_code, session.feed_token
+            )
+            mode = socket.SNAP_QUOTE
 
-        def on_error(*_args) -> None:
-            if on_status:
-                on_status("market.connection_error", {})
+            def on_open(wsapp) -> None:
+                self._stream_connected.set()
+                self._last_tick_monotonic = None
+                self._last_pong_monotonic = time.monotonic()
+                socket.subscribe("northstar1", mode, token_list)
+                report("market.connected", {"subscriptions": len(instruments), "mode": "snap_quote"})
 
-        def on_close(*_args) -> None:
-            if on_status:
-                on_status("market.connection_closed", {})
+            def on_data(_wsapp, message) -> None:
+                try:
+                    token = int(message["token"])
+                    metadata = token_map.get(token)
+                    if metadata is None:
+                        report("market.unknown_instrument", {"instrument_token": token})
+                        return
+                    tick = self.normalize_tick(message, metadata)
+                    tick_age = (datetime.now(timezone.utc) - _angel_timestamp(tick.timestamp)).total_seconds()
+                    if 0 <= tick_age <= self.stale_tick_seconds:
+                        self._last_tick_monotonic = time.monotonic()
+                    on_tick(tick)
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    report("market.invalid_tick")
+                except Exception as error:
+                    report("market.tick_handler_error", {"code": type(error).__name__})
 
-        socket.on_open = on_open
-        socket.on_data = on_data
-        socket.on_error = on_error
-        socket.on_close = on_close
-        self.websocket = socket
-        self._websocket_thread = threading.Thread(target=socket.connect, daemon=True, name="angelone-market-feed")
+            def on_error(*_args) -> None:
+                self._stream_connected.clear()
+                report("market.connection_error")
+
+            def on_close(*_args) -> None:
+                self._stream_connected.clear()
+                report("market.connection_closed")
+
+            def on_pong(*_args) -> None:
+                self._last_pong_monotonic = time.monotonic()
+
+            socket.on_open = on_open
+            socket.on_data = on_data
+            socket.on_error = on_error
+            socket.on_close = on_close
+            socket.on_pong = on_pong
+            return socket
+
+        initial_socket = make_socket()
+        self.websocket = initial_socket
+
+        def supervise_websocket() -> None:
+            pending_socket = initial_socket
+            failures = 0
+            while not stop_event.is_set():
+                try:
+                    socket = pending_socket or make_socket()
+                except Exception as error:
+                    failures += 1
+                    report("market.connection_error", {"code": type(error).__name__})
+                    if failures >= self.max_reconnect_attempts:
+                        report("market.reconnect_exhausted", {"attempts": failures})
+                        break
+                    delay = min(30.0, self.reconnect_backoff_seconds * (2 ** (failures - 1)))
+                    report("market.reconnecting", {"attempts": failures, "delay_seconds": delay})
+                    if stop_event.wait(delay):
+                        break
+                    continue
+                pending_socket = None
+                self.websocket = socket
+                started_at = time.monotonic()
+                try:
+                    socket.connect()
+                except Exception as error:
+                    self._stream_connected.clear()
+                    report("market.connection_error", {"code": type(error).__name__})
+                finally:
+                    self._stream_connected.clear()
+                if stop_event.is_set():
+                    break
+                if time.monotonic() - started_at >= 30:
+                    failures = 0
+                failures += 1
+                if failures >= self.max_reconnect_attempts:
+                    report("market.reconnect_exhausted", {"attempts": failures})
+                    break
+                delay = min(30.0, self.reconnect_backoff_seconds * (2 ** (failures - 1)))
+                report("market.reconnecting", {"attempts": failures, "delay_seconds": delay})
+                if stop_event.wait(delay):
+                    break
+
+        def supervise_rest_fallback() -> None:
+            while not stop_event.wait(self.fallback_interval_seconds):
+                last_pong = self._last_pong_monotonic
+                if (
+                    self._stream_connected.is_set()
+                    and last_pong is not None
+                    and time.monotonic() - last_pong > 45
+                ):
+                    report("market.heartbeat_timeout")
+                    if self.websocket is not None:
+                        self.websocket.close_connection()
+                    self._stream_connected.clear()
+                last_tick = self._last_tick_monotonic
+                stale = last_tick is None or time.monotonic() - last_tick >= self.stale_tick_seconds
+                if self._stream_connected.is_set() and not stale:
+                    continue
+                try:
+                    count = self._poll_rest_fallback(instruments, on_tick=on_tick, on_status=report)
+                    report("market.rest_fallback_complete", {"quotes": count})
+                except Exception as error:
+                    report("market.rest_fallback_error", {"code": type(error).__name__})
+
+        self._websocket_thread = threading.Thread(
+            target=supervise_websocket, daemon=True, name="angelone-market-feed"
+        )
+        self._fallback_thread = threading.Thread(
+            target=supervise_rest_fallback, daemon=True, name="angelone-market-rest-fallback"
+        )
         self._websocket_thread.start()
-        return socket
+        self._fallback_thread.start()
+        return initial_socket
+
+    def _poll_rest_fallback(
+        self,
+        instruments: list[dict],
+        *,
+        on_tick: Callable[[AngelOneTick], None],
+        on_status: Callable[[str, dict], None] | None = None,
+    ) -> int:
+        self._require_session()
+        batches = [instruments[index:index + 50] for index in range(0, len(instruments), 50)]
+        accepted = 0
+        for batch_index, batch in enumerate(batches):
+            if self._stream_stop is not None and self._stream_stop.is_set():
+                break
+            exchange_tokens: dict[str, list[str]] = {}
+            token_map = {}
+            for instrument in batch:
+                exchange = str(instrument["exchange"]).upper()
+                token = str(instrument["instrument_token"])
+                exchange_tokens.setdefault(exchange, []).append(token)
+                token_map[token] = instrument
+            response = self._client.getMarketData("FULL", exchange_tokens)
+            data = response.get("data", {}) if isinstance(response, dict) else {}
+            if (
+                not isinstance(response, dict)
+                or response.get("status") is not True
+                or not isinstance(data, dict)
+                or not isinstance(data.get("fetched"), list)
+            ):
+                raise RuntimeError("Angel One quote fallback response is invalid")
+            for quote in data["fetched"]:
+                try:
+                    token = str(quote["symbolToken"])
+                    instrument = token_map.get(token)
+                    if instrument is None:
+                        continue
+                    tick = self.normalize_rest_quote(quote, instrument)
+                    on_tick(tick)
+                    self._last_tick_monotonic = time.monotonic()
+                    accepted += 1
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    if on_status:
+                        on_status("market.invalid_rest_quote", {})
+            if batch_index + 1 < len(batches):
+                if self._stream_stop is not None and self._stream_stop.wait(1.0):
+                    break
+                if self._stream_stop is None:
+                    time.sleep(1.0)
+        return accepted
+
+    def normalize_rest_quote(self, quote: dict, instrument: dict) -> AngelOneTick:
+        token = int(quote["symbolToken"])
+        timestamp = _angel_timestamp(quote.get("exchFeedTime") or quote.get("exchangeTimestamp"))
+        quote_age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+        if quote_age < 0 or quote_age > self.max_quote_age_seconds:
+            raise ValueError("Angel One REST quote is stale")
+        last_price = _portfolio_decimal(quote, "ltp")
+        if last_price is None or last_price <= 0:
+            raise ValueError("Angel One REST quote has an invalid last price")
+        timestamp_text = timestamp.isoformat()
+        event_id = f"angelone-rest:{token}:{timestamp_text}:{last_price}"
+        day_ohlc = {}
+        for field in ("open", "high", "low", "close"):
+            value = _portfolio_decimal(quote, field)
+            if value is not None and value > 0:
+                day_ohlc[field] = float(value)
+        volume_value = _portfolio_decimal(quote, "tradeVolume", "volume")
+        volume = int(volume_value) if volume_value is not None and volume_value >= 0 else None
+        return AngelOneTick(
+            event_id=event_id,
+            timestamp=timestamp_text,
+            ingested_at=datetime.now(timezone.utc).isoformat(),
+            correlation_id=str(uuid4()),
+            source="angelone_smartapi",
+            instrument_token=token,
+            exchange=str(instrument["exchange"]),
+            symbol=str(instrument["tradingsymbol"]),
+            last_price=float(last_price),
+            last_trade_quantity=None,
+            volume=volume,
+            open_interest=int(_portfolio_decimal(quote, "opnInterest", "openInterest") or 0) or None,
+            day_ohlc=day_ohlc,
+            bids=(),
+            asks=(),
+            sequence=None,
+        )
 
 
 def _angel_timestamp(value) -> datetime:
@@ -555,6 +849,256 @@ def _angel_timestamp(value) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
     return parsed.astimezone(timezone.utc)
+
+
+def _portfolio_response_rows(response: dict, collection: str) -> list[dict]:
+    if not isinstance(response, dict) or response.get("status") is not True:
+        raise RuntimeError("Angel One portfolio response is invalid")
+    data = response.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        rows = data.get(collection)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+        if collection == "net" and isinstance(data.get("positions"), list):
+            return [row for row in data["positions"] if isinstance(row, dict)]
+    return []
+
+
+def _portfolio_decimal(row: dict, *keys: str) -> Decimal | None:
+    for key in keys:
+        raw = row.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            value = Decimal(str(raw).replace(" ", "").replace(",", ""))
+        except (InvalidOperation, ValueError):
+            return None
+        return value if value.is_finite() else None
+    return None
+
+
+def _normalize_broker_position(row: dict, *, source: str) -> dict | None:
+    symbol = str(row.get("tradingsymbol") or row.get("symbol") or "").strip().upper()
+    exchange = str(row.get("exchange") or "").strip().upper()
+    instrument_token = str(row.get("symboltoken") or row.get("instrument_token") or "").strip()
+    if not symbol or exchange not in {"NSE", "BSE", "NFO", "BFO"} or not instrument_token:
+        return None
+    if source == "HOLDING":
+        quantity_value = _portfolio_decimal(row, "quantity")
+        average_price = _portfolio_decimal(row, "averageprice", "average_price")
+    else:
+        quantity_value = _portfolio_decimal(row, "netqty", "netQuantity", "net_quantity")
+        net_quantity_fields = ("netqty", "netQuantity", "net_quantity")
+        if quantity_value is None and not any(row.get(key) not in (None, "") for key in net_quantity_fields):
+            buy_quantity = _portfolio_decimal(row, "buyqty") or Decimal("0")
+            carry_buy = _portfolio_decimal(row, "cfbuyqty") or Decimal("0")
+            sell_quantity = _portfolio_decimal(row, "sellqty") or Decimal("0")
+            carry_sell = _portfolio_decimal(row, "cfsellqty") or Decimal("0")
+            quantity_value = buy_quantity + carry_buy - sell_quantity - carry_sell
+        average_price = _portfolio_decimal(row, "avgnetprice", "averageprice", "buyavgprice")
+    if quantity_value is None or quantity_value != quantity_value.to_integral_value():
+        return None
+    quantity = int(quantity_value)
+    if quantity != 0 and (average_price is None or average_price <= 0):
+        return None
+    if average_price is not None:
+        average_price = abs(average_price)
+    last_price = _portfolio_decimal(row, "ltp", "lastprice", "last_price")
+    reported_pnl = _portfolio_decimal(row, "profitandloss", "pnl")
+    return {
+        "source": source,
+        "symbol": symbol,
+        "exchange": exchange,
+        "instrument_token": instrument_token,
+        "product_type": str(row.get("producttype") or row.get("product") or "UNKNOWN").upper(),
+        "quantity": quantity,
+        "average_entry_price": str(average_price) if average_price is not None else None,
+        "last_price": str(last_price) if last_price is not None else None,
+        "market_value": str(last_price * quantity) if last_price is not None else None,
+        "reported_pnl": str(reported_pnl) if reported_pnl is not None else None,
+    }
+
+
+def normalize_angelone_instrument_master(
+    rows: list[dict],
+    *,
+    price_scale: Decimal,
+    as_of: date | None = None,
+) -> tuple[IndiaMarketPolicy, dict[str, int]]:
+    """Convert supported Angel One master rows into India-domain reference records."""
+    if not price_scale.is_finite() or price_scale <= 0:
+        raise ValueError("Angel One price scale must be a finite positive decimal")
+    effective_date = as_of or datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    segments = {
+        "NSE": ("NSE", "NSE-CM"),
+        "BSE": ("BSE", "BSE-CM"),
+        "NFO": ("NSE", "NFO"),
+        "NSE_FO": ("NSE", "NFO"),
+        "BFO": ("BSE", "BFO"),
+        "BSE_FO": ("BSE", "BFO"),
+    }
+    exchange_names = {"NSE": "National Stock Exchange of India", "BSE": "BSE Limited"}
+    asset_types = {
+        "OPTIDX": AssetType.OPTION,
+        "OPTSTK": AssetType.OPTION,
+        "FUTIDX": AssetType.FUTURE,
+        "FUTSTK": AssetType.FUTURE,
+    }
+    rejected: dict[str, int] = {}
+    exchanges: dict[str, Exchange] = {}
+    instruments: dict[tuple[str, str], Instrument] = {}
+    underlying_aliases: dict[str, Instrument] = {}
+    derivative_rows: list[tuple[dict, str, str]] = []
+
+    def reject(reason: str) -> None:
+        rejected[reason] = rejected.get(reason, 0) + 1
+
+    def register_exchange(code: str) -> None:
+        exchanges.setdefault(code, Exchange(code, exchange_names[code], "IN", "Asia/Kolkata"))
+
+    def register_instrument(instrument: Instrument) -> None:
+        key = (instrument.exchange_code, instrument.symbol)
+        instruments.setdefault(key, instrument)
+        for alias in (instrument.symbol, instrument.name):
+            normalized_alias = alias.strip().upper()
+            if normalized_alias:
+                underlying_aliases.setdefault(normalized_alias, instruments[key])
+        if instrument.symbol.endswith("-EQ"):
+            underlying_aliases.setdefault(instrument.symbol[:-3], instruments[key])
+
+    for row in rows:
+        if not isinstance(row, dict):
+            reject("invalid_master_row")
+            continue
+        provider_segment = str(row.get("exch_seg", "")).strip().upper()
+        mapped = segments.get(provider_segment)
+        if mapped is None:
+            reject("unsupported_exchange_segment")
+            continue
+        exchange_code, canonical_segment = mapped
+        raw_type = str(row.get("instrumenttype", "")).strip().upper()
+        symbol = str(row.get("symbol", "")).strip().upper()
+        name = str(row.get("name") or symbol).strip().upper()
+        raw_token = row.get("token")
+        token = str(raw_token).strip() if raw_token is not None else ""
+        if not symbol or not token:
+            reject("missing_symbol_or_token")
+            continue
+
+        if provider_segment in {"NSE", "BSE"}:
+            if raw_type in {"", "EQUITY"}:
+                asset_type = AssetType.EQUITY
+            elif raw_type in {"AMXIDX", "INDEX"}:
+                asset_type = AssetType.INDEX
+            else:
+                reject("unsupported_cash_instrument_type")
+                continue
+            register_exchange(exchange_code)
+            register_instrument(Instrument(
+                exchange_code=exchange_code,
+                symbol=symbol,
+                asset_type=asset_type,
+                name=name,
+                segment=canonical_segment,
+                instrument_token=token,
+            ))
+            continue
+
+        if raw_type not in asset_types:
+            reject("unsupported_derivative_instrument_type")
+            continue
+        register_exchange(exchange_code)
+        derivative_rows.append((row, exchange_code, canonical_segment))
+
+    contracts: list[Contract] = []
+    expiry_groups: dict[tuple[str, str, AssetType], set[date]] = {}
+    contract_keys: set[tuple[str, str, date]] = set()
+    for row, exchange_code, canonical_segment in derivative_rows:
+        symbol = str(row["symbol"]).strip().upper()
+        name = str(row.get("name") or "").strip().upper()
+        underlying = underlying_aliases.get(name)
+        if underlying is None and name in INDEX_TOKENS:
+            underlying = Instrument(
+                exchange_code="NSE",
+                symbol=name,
+                asset_type=AssetType.INDEX,
+                name=name,
+                segment="INDEX",
+                instrument_token=INDEX_TOKENS[name],
+            )
+            register_exchange("NSE")
+            register_instrument(underlying)
+            underlying = underlying_aliases[name]
+        if underlying is None:
+            reject("unresolved_derivative_underlying")
+            continue
+        try:
+            expiry = _angel_expiry(row["expiry"])
+            raw_lot_size = row["lotsize"]
+            if isinstance(raw_lot_size, bool):
+                raise ValueError("Lot size must be a positive integer")
+            lot_size_value = Decimal(str(raw_lot_size))
+            if (
+                not lot_size_value.is_finite()
+                or lot_size_value <= 0
+                or lot_size_value != lot_size_value.to_integral_value()
+            ):
+                raise ValueError("Lot size must be a positive integer")
+            lot_size = int(lot_size_value)
+            raw_tick = row.get("tick_size", row.get("ticksize"))
+            tick_size = Decimal(str(raw_tick)) / price_scale
+            asset_type = asset_types[str(row["instrumenttype"]).strip().upper()]
+            strike = None
+            option_type = None
+            if asset_type == AssetType.OPTION:
+                strike = Decimal(str(row["strike"])) / price_scale
+                option_type = OptionType.CALL if symbol.endswith("CE") else OptionType.PUT if symbol.endswith("PE") else None
+                if option_type is None:
+                    raise ValueError("Option side is missing")
+            contract_instrument = Instrument(
+                exchange_code=exchange_code,
+                symbol=symbol,
+                asset_type=asset_type,
+                name=name,
+                segment=canonical_segment,
+                instrument_token=str(row["token"]),
+            )
+            contract = Contract(
+                instrument=contract_instrument,
+                underlying=underlying,
+                expiry=expiry,
+                lot_size=LotSize(lot_size, effective_date),
+                tick_size=TickSize(tick_size, effective_date),
+                strike=strike,
+                option_type=option_type,
+                product_type=str(row["instrumenttype"]).strip().upper(),
+            )
+        except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
+            reject("invalid_derivative_reference_fields")
+            continue
+        key = (exchange_code, symbol, expiry)
+        if key in contract_keys:
+            reject("duplicate_derivative_contract")
+            continue
+        contract_keys.add(key)
+        contracts.append(contract)
+        expiry_groups.setdefault((exchange_code, underlying.symbol, asset_type), set()).add(expiry)
+
+    expiry_calendars = tuple(
+        ExpiryCalendar(exchange_code, underlying_symbol, asset_type, tuple(sorted(expiries)))
+        for (exchange_code, underlying_symbol, asset_type), expiries in sorted(
+            expiry_groups.items(), key=lambda item: (item[0][0], item[0][1], item[0][2].value)
+        )
+    )
+    policy = IndiaMarketPolicy(
+        exchanges=tuple(exchanges[code] for code in sorted(exchanges)),
+        instruments=tuple(instruments[key] for key in sorted(instruments)),
+        contracts=tuple(contracts),
+        expiry_calendars=expiry_calendars,
+    )
+    return policy, rejected
 
 
 def _angel_expiry(value) -> date:
@@ -596,6 +1140,12 @@ def _load_websocket_factory():
 
 def _verified_websocket_class(base_class, websocket_module):
     class VerifiedSmartWebSocketV2(base_class):
+        def _on_pong(self, wsapp, data):
+            super()._on_pong(wsapp, data)
+            callback = getattr(self, "on_pong", None)
+            if callback is not None:
+                callback(wsapp, data)
+
         def connect(self):
             headers = {
                 "Authorization": self.auth_token,
@@ -614,6 +1164,6 @@ def _verified_websocket_class(base_class, websocket_module):
                 on_ping=self._on_ping,
                 on_pong=self._on_pong,
             )
-            self.wsapp.run_forever(ping_interval=self.HEART_BEAT_INTERVAL)
+            self.wsapp.run_forever(ping_interval=30, ping_timeout=10)
 
     return VerifiedSmartWebSocketV2

@@ -2,19 +2,54 @@
 
 from __future__ import annotations
 
-from math import sqrt
+from datetime import datetime, timezone
+from math import isfinite, sqrt
 from statistics import mean, pstdev
 from uuid import uuid4
 
 from core import Candle
 
+MULTI_TIMEFRAME_ANALYSIS = ("1d", "1h", "15m", "5m", "1m")
+
+
+class FeatureValidator:
+    @staticmethod
+    def validate(snapshot: dict) -> dict:
+        features = snapshot.get("features")
+        if not isinstance(features, dict):
+            raise ValueError("Feature snapshot must contain a features mapping")
+        for name, value in features.items():
+            if value is None:
+                continue
+            try:
+                finite = isfinite(value) if isinstance(value, (int, float)) else False
+            except OverflowError:
+                finite = False
+            if isinstance(value, bool) or not finite:
+                raise ValueError(f"Feature {name} must be finite or unavailable")
+        return snapshot
+
 
 def feature_snapshot(candles: list[Candle]) -> dict:
     if not candles:
         raise ValueError("At least one candle is required")
-    ordered = sorted(candles, key=lambda item: item.timestamp)
+    for index, candle in enumerate(candles):
+        try:
+            Candle(
+                candle.symbol, candle.timestamp, candle.open, candle.high,
+                candle.low, candle.close, candle.volume, candle.open_interest,
+                candle.timeframe,
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError(f"Invalid feature input candle {index}: {error}") from error
+    ordered = sorted(candles, key=_timestamp_key)
     if len({item.symbol for item in ordered}) != 1:
         raise ValueError("Feature snapshots accept exactly one instrument")
+    if len({item.timeframe for item in ordered}) != 1:
+        raise ValueError("Feature snapshots accept exactly one timeframe")
+    timestamp_keys = [_timestamp_key(candle) for candle in ordered]
+    if len(timestamp_keys) != len(set(timestamp_keys)):
+        raise ValueError("Feature candles must have unique timestamps")
     closes = [item.close for item in ordered]
     volumes = [item.volume for item in ordered]
     current = ordered[-1]
@@ -26,6 +61,8 @@ def feature_snapshot(candles: list[Candle]) -> dict:
     atr_14 = _atr(ordered, 14)
     bands = _bollinger(closes, 20)
     returns = [closes[index] / closes[index - 1] - 1 for index in range(1, len(closes)) if closes[index - 1] > 0]
+    if any(not isfinite(value) for value in returns):
+        raise ValueError("Feature returns must be finite")
     volatility = pstdev(returns[-20:]) * sqrt(252) * 100 if len(returns) >= 2 else None
     volume_z = _zscore(volumes[-20:]) if len(volumes) >= 2 else None
     vwap_window = ordered[-20:]
@@ -42,9 +79,10 @@ def feature_snapshot(candles: list[Candle]) -> dict:
     atr_pct = atr_14 / current.close * 100 if atr_14 is not None else None
     volatility_regime = "INSUFFICIENT_DATA" if atr_pct is None else "HIGH_VOLATILITY" if atr_pct >= 3 else "LOW_VOLATILITY" if atr_pct <= 1 else "NORMAL_VOLATILITY"
     momentum_20 = current.close / closes[-21] - 1 if len(closes) >= 21 else None
-    return {
+    return FeatureValidator.validate({
         "snapshot_id": str(uuid4()),
         "symbol": current.symbol,
+        "timeframe": current.timeframe,
         "timestamp": current.timestamp,
         "bar_count": len(ordered),
         "source": "ohlcv_feature_engine",
@@ -70,6 +108,41 @@ def feature_snapshot(candles: list[Candle]) -> dict:
             "volatility": volatility_regime,
             "risk_posture": "RISK_ON" if momentum_20 is not None and momentum_20 > 0 else "RISK_OFF" if momentum_20 is not None else "UNKNOWN",
         },
+    })
+
+
+def _timestamp_key(candle: Candle) -> datetime:
+    timestamp = datetime.fromisoformat(candle.timestamp.replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc)
+
+
+def multi_timeframe_feature_snapshot(
+    candles_by_timeframe: dict[str, list[Candle]],
+    *,
+    required_timeframes: tuple[str, ...] = MULTI_TIMEFRAME_ANALYSIS,
+) -> dict:
+    if not required_timeframes or len(required_timeframes) != len(set(required_timeframes)):
+        raise ValueError("Required analysis timeframes must be non-empty and unique")
+    snapshots = {}
+    symbols = set()
+    for timeframe, candles in candles_by_timeframe.items():
+        if not candles:
+            continue
+        snapshot = feature_snapshot(candles)
+        if snapshot["timeframe"] != timeframe:
+            raise ValueError(f"Candle timeframe does not match requested frame {timeframe}")
+        snapshots[timeframe] = snapshot
+        symbols.add(snapshot["symbol"])
+    if not snapshots:
+        raise ValueError("At least one timeframe must contain candles")
+    if len(symbols) != 1:
+        raise ValueError("Multi-timeframe features accept exactly one instrument")
+    return {
+        "symbol": next(iter(symbols)),
+        "timeframes": snapshots,
+        "missing_timeframes": [timeframe for timeframe in required_timeframes if timeframe not in snapshots],
     }
 
 
